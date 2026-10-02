@@ -1,0 +1,1 @@
+ALTER TABLE `Member` ADD COLUMN `discountPercent` INTEGER NOT NULL DEFAULT 0;

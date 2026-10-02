@@ -1,0 +1,102 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+enum UserRole {
+  ADMIN
+  CASHIER
+}
+
+enum TransactionStatus {
+  PAID
+  VOID
+}
+
+enum PaymentMethod {
+  CASH
+}
+
+model User {
+  id           Int           @id @default(autoincrement())
+  name         String
+  username     String        @unique
+  email        String        @unique
+  passwordHash String
+  role         UserRole      @default(CASHIER)
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  transactions Transaction[]
+
+  @@index([role])
+}
+
+model Product {
+  id           Int           @id @default(autoincrement())
+  name         String
+  category     String
+  price        Int
+  stock        Int           @default(0)
+  color        String        @default("coral")
+  imageUrl     String?
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  transactionItems TransactionItem[]
+
+  @@index([category])
+}
+
+model Member {
+  id           Int           @id @default(autoincrement())
+  code         String        @unique
+  name         String
+  phone        String?       @unique
+  points       Int           @default(0)
+  discountPercent Int        @default(0)
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  transactions Transaction[]
+}
+
+model Transaction {
+  id            Int               @id @default(autoincrement())
+  invoiceNumber String            @unique
+  cashierId     Int
+  memberId      Int?
+  subtotal      Int
+  discount      Int               @default(0)
+  total         Int
+  paidAmount    Int
+  changeAmount  Int
+  paymentMethod PaymentMethod     @default(CASH)
+  status        TransactionStatus @default(PAID)
+  createdAt     DateTime          @default(now())
+  cashier       User              @relation(fields: [cashierId], references: [id])
+  member        Member?           @relation(fields: [memberId], references: [id])
+  items         TransactionItem[]
+
+  @@index([createdAt])
+  @@index([cashierId])
+  @@index([memberId])
+}
+
+model TransactionItem {
+  id            Int         @id @default(autoincrement())
+  transactionId Int
+  productId     Int
+  productName   String
+  price         Int
+  quantity      Int
+  lineTotal     Int
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  product       Product     @relation(fields: [productId], references: [id])
+
+  @@index([transactionId])
+  @@index([productId])
+}
