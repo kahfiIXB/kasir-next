@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
-import { mkdir, unlink, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
@@ -11,11 +9,59 @@ const allowedImageTypes = new Map([
   ["image/webp", "webp"],
 ]);
 const maxImageSize = 5 * 1024 * 1024;
+const bundledProductImages: Record<string, string> = {
+  "nasi goreng spesial": "/menu/nasi%20goreng%20spesial.jpg",
+  "ayam geprek sambal ijo": "/menu/Ayam%20Geprek%20with%20Sambal%20Ijo.png",
+  "mie goreng jawa": "/menu/Mie%20goreng%20jawa.jpg",
+  "es kopi gula aren": "/menu/Es%20kopi%20gula%20aren.jpg",
+  "teh tarik dingin": "/menu/teh%20tarik%20dingin.jpg",
+  "pisang goreng keju": "/menu/pisang%20goreng%20keju.jpg",
+};
+
+async function uploadProductImage(image: File) {
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+  const apiKey = process.env.CLOUDINARY_API_KEY;
+  const apiSecret = process.env.CLOUDINARY_API_SECRET;
+  if (!cloudName || !apiKey || !apiSecret) throw new Error("Penyimpanan foto belum dikonfigurasi. Atur variabel Cloudinary di Vercel.");
+
+  const extension = allowedImageTypes.get(image.type);
+  if (!extension) throw new Error("Format foto harus JPG, PNG, atau WebP.");
+  if (image.size > maxImageSize) throw new Error("Ukuran foto maksimal 5 MB.");
+
+  const imageBuffer = Buffer.from(await image.arrayBuffer());
+  const validImage = extension === "jpg"
+    ? imageBuffer[0] === 0xff && imageBuffer[1] === 0xd8 && imageBuffer[2] === 0xff
+    : extension === "png"
+      ? imageBuffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+      : imageBuffer.toString("ascii", 0, 4) === "RIFF" && imageBuffer.toString("ascii", 8, 12) === "WEBP";
+  if (!validImage) throw new Error("File yang dipilih bukan gambar yang valid.");
+
+  const timestamp = Math.floor(Date.now() / 1000);
+  const folder = "kasir-next/products";
+  const signature = createHash("sha1").update(`folder=${folder}&timestamp=${timestamp}${apiSecret}`).digest("hex");
+  const uploadData = new FormData();
+  uploadData.set("file", new Blob([imageBuffer], { type: image.type }), image.name);
+  uploadData.set("api_key", apiKey);
+  uploadData.set("timestamp", String(timestamp));
+  uploadData.set("folder", folder);
+  uploadData.set("signature", signature);
+
+  const response = await fetch(`https://api.cloudinary.com/v1_1/${encodeURIComponent(cloudName)}/image/upload`, { method: "POST", body: uploadData });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || typeof result.secure_url !== "string") {
+    throw new Error("Foto gagal diunggah ke Cloudinary. Periksa konfigurasi Cloudinary.");
+  }
+  return result.secure_url as string;
+}
 
 export async function GET() {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  return NextResponse.json(await prisma.product.findMany({ where: { isActive: true }, orderBy: { name: "asc" } }));
+  const products = await prisma.product.findMany({ where: { isActive: true }, orderBy: { name: "asc" } });
+  return NextResponse.json(products.map((product) => ({
+    ...product,
+    imageUrl: product.imageUrl ?? bundledProductImages[product.name.toLowerCase()] ?? null,
+  })));
 }
 
 export async function POST(request: Request) {
@@ -33,31 +79,16 @@ export async function POST(request: Request) {
   if (!(image instanceof File) || image.size === 0) {
     return NextResponse.json({ error: "Foto menu wajib ditambahkan." }, { status: 400 });
   }
-  const extension = allowedImageTypes.get(image.type);
-  if (!extension) return NextResponse.json({ error: "Format foto harus JPG, PNG, atau WebP." }, { status: 400 });
-  if (image.size > maxImageSize) return NextResponse.json({ error: "Ukuran foto maksimal 5 MB." }, { status: 400 });
-
-  const imageBuffer = Buffer.from(await image.arrayBuffer());
-  const validImage = extension === "jpg"
-    ? imageBuffer[0] === 0xff && imageBuffer[1] === 0xd8 && imageBuffer[2] === 0xff
-    : extension === "png"
-      ? imageBuffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
-      : imageBuffer.toString("ascii", 0, 4) === "RIFF" && imageBuffer.toString("ascii", 8, 12) === "WEBP";
-  if (!validImage) return NextResponse.json({ error: "File yang dipilih bukan gambar yang valid." }, { status: 400 });
-
-  const filename = `${randomUUID()}.${extension}`;
-  const uploadDirectory = path.join(process.cwd(), "public", "uploads", "products");
-  await mkdir(uploadDirectory, { recursive: true });
-  const imagePath = path.join(uploadDirectory, filename);
-  await writeFile(imagePath, imageBuffer);
-  const imageUrl = `/uploads/products/${filename}`;
-  let product;
+  let imageUrl: string;
   try {
-    product = await prisma.product.create({ data: { name, category, price, stock, imageUrl } });
+    imageUrl = await uploadProductImage(image);
   } catch (error) {
-    await unlink(imagePath).catch(() => undefined);
-    throw error;
+    const message = error instanceof Error ? error.message : "Foto menu gagal diunggah.";
+    const status = message.startsWith("Penyimpanan foto") ? 503 : 400;
+    return NextResponse.json({ error: message }, { status });
   }
+
+  const product = await prisma.product.create({ data: { name, category, price, stock, imageUrl } });
   return NextResponse.json(product, { status: 201 });
 }
 
@@ -74,8 +105,22 @@ export async function PATCH(request: Request) {
   const user = await getCurrentUser();
   if (!user || user.role !== "ADMIN") return NextResponse.json({ error: "Akses admin diperlukan." }, { status: 403 });
   const id = Number(new URL(request.url).searchParams.get("id"));
-  const body = await request.json();
   if (!id) return NextResponse.json({ error: "ID produk tidak valid." }, { status: 400 });
-  const product = await prisma.product.update({ where: { id }, data: { name: body.name?.trim(), price: body.price === undefined ? undefined : Number(body.price), stock: body.stock === undefined ? undefined : Number(body.stock), category: body.category, isActive: body.isActive } });
+  const formData = await request.formData();
+  const image = formData.get("image");
+  let imageUrl: string | undefined;
+  if (image instanceof File && image.size > 0) {
+    try {
+      imageUrl = await uploadProductImage(image);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Foto menu gagal diunggah.";
+      const status = message.startsWith("Penyimpanan foto") ? 503 : 400;
+      return NextResponse.json({ error: message }, { status });
+    }
+  }
+  const name = String(formData.get("name") ?? "").trim();
+  const price = formData.has("price") ? Number(formData.get("price")) : undefined;
+  const stock = formData.has("stock") ? Number(formData.get("stock")) : undefined;
+  const product = await prisma.product.update({ where: { id }, data: { name: name || undefined, price, stock, imageUrl } });
   return NextResponse.json(product);
 }
