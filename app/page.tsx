@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import PeriodSummaryView from "./summary-view";
+import ProductImageManager from "./product-image-manager";
 
 type Product = { id: number; name: string; category: string; price: number; stock: number; color: string; imageUrl?: string | null };
 type CartLine = Product & { quantity: number };
@@ -115,6 +116,7 @@ function MemberAdminView() {
 function AdminResourceView({ resource }: { resource: AdminResource }) {
   if (resource === "Member") return <MemberAdminView />;
   if (resource === "Pengguna") return <UserAdminView />;
+  if (resource === "Produk") return <><AdminResourceDataView resource={resource} /><ProductImageManager /></>;
   return <AdminResourceDataView resource={resource} />;
 }
 
@@ -172,6 +174,8 @@ function AdminResourceDataView({ resource }: { resource: AdminResource }) {
   const [message, setMessage] = useState("");
   const [selectedProductId, setSelectedProductId] = useState("");
   const [editingProduct, setEditingProduct] = useState<{ id: unknown; name: string; price: string; stock: string } | null>(null);
+  const [editingImageFile, setEditingImageFile] = useState<File | null>(null);
+  const [editingImagePreview, setEditingImagePreview] = useState("");
 
   const load = async () => {
     try {
@@ -195,6 +199,12 @@ function AdminResourceDataView({ resource }: { resource: AdminResource }) {
     setImagePreview(previewUrl);
     return () => URL.revokeObjectURL(previewUrl);
   }, [imageFile]);
+  useEffect(() => {
+    if (!editingImageFile) return;
+    const previewUrl = URL.createObjectURL(editingImageFile);
+    setEditingImagePreview(previewUrl);
+    return () => URL.revokeObjectURL(previewUrl);
+  }, [editingImageFile]);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -225,14 +235,27 @@ function AdminResourceDataView({ resource }: { resource: AdminResource }) {
   };
   const updateProduct = async () => {
     if (!editingProduct) return;
-    const response = await fetch(`/api/products?id=${editingProduct.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stock: Number(editingProduct.stock), price: Number(editingProduct.price) }) });
-    setMessage(response.ok ? "Menu berhasil diperbarui." : "Menu gagal diperbarui.");
-    setEditingProduct(null);
-    load();
+    const body = new FormData();
+    body.set("stock", editingProduct.stock);
+    body.set("price", editingProduct.price);
+    if (editingImageFile) body.set("image", editingImageFile);
+    const response = await fetch(`/api/products?id=${editingProduct.id}`, { method: "PATCH", body });
+    const result = await response.json().catch(() => ({}));
+    setMessage(response.ok ? "Menu berhasil diperbarui." : result.error ?? "Menu gagal diperbarui.");
+    if (response.ok) {
+      setEditingProduct(null);
+      setEditingImageFile(null);
+      setEditingImagePreview("");
+      await load();
+    }
   };
   const openProductEditor = () => {
     const item = items.find((entry) => String(entry.id) === selectedProductId);
-    if (item) setEditingProduct({ id: item.id, name: String(item.name ?? ""), price: String(item.price ?? 0), stock: String(item.stock ?? 0) });
+    if (item) {
+      setEditingImageFile(null);
+      setEditingImagePreview(String(item.imageUrl ?? ""));
+      setEditingProduct({ id: item.id, name: String(item.name ?? ""), price: String(item.price ?? 0), stock: String(item.stock ?? 0) });
+    }
   };
   return <><div className="admin-view"><div className="admin-view-heading"><div><p className="eyebrow">PENGELOLAAN TOKO</p><h2>{resource}</h2><p>Kelola data {resource.toLowerCase()} Ruang Rasa dari satu tempat.</p></div><span className="record-count">{items.length} data aktif</span></div><div className="admin-content"><form className="admin-form" onSubmit={submit}><span className="panel-kicker">TAMBAH {resource.toUpperCase()}</span><h3>Data baru</h3><label>Nama<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder={resource === "Produk" ? "Nama menu" : resource === "Member" ? "Nama pelanggan" : "Nama kasir"} required /></label>{resource === "Produk" && <><label>Kategori<select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })}><option>Makanan</option><option>Minuman</option><option>Snack</option></select></label><div className="form-split"><label>Harga<input type="number" min="0" step="1" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} required /></label><label>Stok<input type="number" min="0" step="1" value={form.stock} onChange={(event) => setForm({ ...form, stock: event.target.value })} /></label></div><label>Foto menu<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setImageFile(event.target.files?.[0] ?? null)} required />{imagePreview && <img className="image-preview" src={imagePreview} alt="Preview foto menu" />}</label></>}{resource === "Member" && <label>No. telepon<input value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} /></label>}{resource === "Pengguna" && <><label>Email<input type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} required /></label><label>Password sementara<input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} minLength={8} required /></label></>}<button className="save-button">Simpan {resource}</button>{resource === "Produk" && items.length > 0 && <div className="quick-update"><select value={selectedProductId} onChange={(event) => setSelectedProductId(event.target.value)}><option value="">Pilih menu untuk update</option>{items.map((item) => <option key={String(item.id)} value={String(item.id)}>{String(item.name)}</option>)}</select><button type="button" className="update-menu-button" onClick={openProductEditor} disabled={!selectedProductId}>Update menu</button></div>}{message && <small className="form-message">{message}</small>}</form><section className="admin-list"><div className="list-heading"><span className="panel-kicker">DATA TERSIMPAN</span><strong>{resource} aktif</strong></div>{items.length === 0 ? <p className="empty-analysis">Belum ada data.</p> : items.map((item) => <div className="admin-row" key={String(item.id)}><span className={`row-avatar ${resource === "Produk" ? "product-list-image" : ""}`}>{resource === "Produk" && item.imageUrl ? <img src={String(item.imageUrl)} alt="" /> : String(item.name ?? "?").slice(0, 1).toUpperCase()}</span><span><strong>{String(item.name ?? "-")}</strong><small>{resource === "Produk" ? `${String(item.category)} · ${formatPrice(Number(item.price))} · stok ${String(item.stock)}` : resource === "Member" ? `${String(item.code ?? "")} · ${String(item.phone ?? "Tanpa nomor")}` : `${String(item.email ?? "")} · ${String(item.role ?? "")}`}</small></span><button className="delete-button" onClick={() => remove(item.id)} aria-label={`Nonaktifkan ${String(item.name)}`}>×</button></div>)}</section></div></div>{editingProduct && <div className="modal-backdrop" onClick={() => setEditingProduct(null)}><div className="edit-modal" onClick={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setEditingProduct(null)}>×</button><span className="panel-kicker">UPDATE MENU</span><h2>{editingProduct.name}</h2><label>Harga<input type="number" value={editingProduct.price} onChange={(event) => setEditingProduct({ ...editingProduct, price: event.target.value })} /></label><label>Stok<input type="number" min="0" value={editingProduct.stock} onChange={(event) => setEditingProduct({ ...editingProduct, stock: event.target.value })} /></label><button className="save-button" onClick={updateProduct}>Simpan perubahan</button></div></div>}</>;
 }
@@ -321,6 +344,7 @@ export default function Home() {
   };
 
   const availableMenus = sessionUser?.role === "ADMIN" ? ["Kasir", "Ringkasan", "Produk", "Member", "Pengguna"] : ["Kasir", "Ringkasan"];
+  const currentDateLabel = new Intl.DateTimeFormat("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Jakarta" }).format(new Date()).toLocaleUpperCase("id-ID");
 
   if (!authChecked) return <main className="auth-loading">Memuat ruang kerja...</main>;
 
@@ -339,7 +363,7 @@ export default function Home() {
       </aside>
 
       <section className="workspace">
-        <header className="topbar"><div><p className="eyebrow">KAMIS, 12 JUNI 2025</p><h1>{activeMenu === "Kasir" ? "Buat penjualan baru" : activeMenu}</h1></div><div className="top-actions"><button className="icon-button" aria-label="Notifikasi">♧<i /></button><button className="outline-button">⌁ <span>Shortcut</span></button></div></header>
+        <header className="topbar"><div><p className="eyebrow">{currentDateLabel}</p><h1>{activeMenu === "Kasir" ? "Buat penjualan baru" : activeMenu}</h1></div><div className="top-actions"><button className="icon-button" aria-label="Notifikasi">♧<i /></button><button className="outline-button">⌁ <span>Shortcut</span></button></div></header>
         {activeMenu === "Kasir" ? <div className="pos-layout">
           <section className="catalog-panel"><div className="catalog-toolbar"><div className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari menu atau scan barcode..." /><kbd>⌘ K</kbd></div><button className="filter-button">☷ Filter</button></div><div className="category-tabs">{["Semua", "Makanan", "Minuman", "Snack"].map((item) => <button key={item} className={category === item ? "selected" : ""} onClick={() => setCategory(item)}>{item}<span>{item === "Semua" ? catalog.length : catalog.filter((product) => product.category === item).length}</span></button>)}</div><div className="product-grid">{visibleProducts.map((product) => <button className="product-card" key={product.id} onClick={() => addToCart(product)}>{product.imageUrl ? <img className="product-photo" src={product.imageUrl} alt={product.name} /> : <div className={`product-art ${product.color}`}><span>{product.category === "Minuman" ? "◒" : product.category === "Snack" ? "✦" : "⌁"}</span></div>}<div className="product-info"><strong>{product.name}</strong><span>{product.category} <em>•</em> Stok {product.stock}</span><b>{formatPrice(product.price)}</b></div><span className="add-product">+</span></button>)}</div><div className="catalog-footer"><span><i className="live-dot" /> Inventori ter-update dari database</span><button>Lihat semua produk <span>→</span></button></div></section>
           <aside className="cart-panel"><div className="cart-heading"><div><span className="panel-kicker">TRANSAKSI SAAT INI</span><h2>Pesanan baru <span className="order-number">#0248</span></h2></div><button className="trash-button" onClick={() => setCart([])} aria-label="Kosongkan pesanan">⌫</button></div><div className="customer-row"><span className="customer-icon">♙</span><span className="member-select-copy"><small>Pelanggan</small><strong>{selectedMember ? `${selectedMember.code} · ${selectedMember.name}` : "Pelanggan umum"}</strong></span><select className="member-select" aria-label="Pilih member" value={selectedMemberId} onChange={(event) => setSelectedMemberId(event.target.value)}><option value="">Pilih member</option>{members.map((member) => <option key={member.id} value={member.id}>{member.code} · {member.name}</option>)}</select></div><div className="cart-lines">{cart.length === 0 ? <div className="empty-cart">Belum ada item di pesanan</div> : cart.map((item) => <div className="cart-line" key={item.id}><div className={`mini-art ${item.color}`}>{item.imageUrl ? <img src={item.imageUrl} alt="" /> : item.category === "Minuman" ? "◒" : "⌁"}</div><div className="line-copy"><strong>{item.name}</strong><span>{formatPrice(item.price)}</span></div><div className="quantity"><button onClick={() => changeQuantity(item.id, -1)}>−</button><span>{item.quantity}</span><button onClick={() => changeQuantity(item.id, 1)}>+</button></div><b>{formatPrice(item.price * item.quantity)}</b></div>)}</div><div className="payment-area"><div className="summary-row"><span>Subtotal <small>{cart.reduce((count, item) => count + item.quantity, 0)} item</small></span><b>{formatPrice(subtotal)}</b></div><div className="summary-row discount-row"><span>Diskon member</span><b>{discount ? `− ${formatPrice(discount)}` : "Rp 0"}</b></div><div className="total-row"><span>Total pembayaran</span><strong>{formatPrice(total)}</strong></div><label className="paid-label">Uang diterima <div className="paid-input"><span>Rp</span><input type="number" value={paid} onChange={(event) => setPaid(Number(event.target.value))} /></div></label><div className={`change-row ${change < 0 ? "not-enough" : ""}`}><span>{change < 0 ? "Kurang" : "Kembalian"}</span><b>{formatPrice(Math.abs(change))}</b></div>{paymentError && <p className="payment-error">{paymentError}</p>}<button className="pay-button" disabled={!cart.length || change < 0 || savingPayment} onClick={handlePayment}>{savingPayment ? "Menyimpan transaksi..." : "Bayar & cetak struk"} <span>→</span></button></div></aside>

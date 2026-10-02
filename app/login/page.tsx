@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 export default function LoginPage() {
   const router = useRouter();
+  const currentYear = new Date().getFullYear();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -50,7 +51,7 @@ export default function LoginPage() {
         </form>
         <small className="login-note">Akun kasir dibuat oleh administrator toko.</small>
       </section>
-      <aside className="login-aside"><span className="aside-kicker">RUANG RASA / 2025</span><h2>Jaga ritme toko.<br /><em>Satu transaksi</em><br />setiap kali.</h2><p>Semua yang kamu butuhkan untuk melayani pelanggan dengan lebih cepat dan rapi.</p><div className="aside-stamp">RR</div></aside>
+      <aside className="login-aside"><span className="aside-kicker">RUANG RASA / {currentYear}</span><h2>Jaga ritme toko.<br /><em>Satu transaksi</em><br />setiap kali.</h2><p>Semua yang kamu butuhkan untuk melayani pelanggan dengan lebih cepat dan rapi.</p><div className="aside-stamp">RR</div></aside>
     </main>
   );
 }
