@@ -10,7 +10,13 @@ export async function POST(request: Request) {
 
   if (!username || !password) return NextResponse.json({ error: "Username dan password wajib diisi." }, { status: 400 });
 
-  const user = await prisma.user.findUnique({ where: { username } });
+  let user;
+  try {
+    user = await prisma.user.findUnique({ where: { username } });
+  } catch (error) {
+    console.error("Login database request failed:", error);
+    return NextResponse.json({ error: "Database belum siap. Pastikan migrasi dan seed sudah dijalankan di Railway." }, { status: 503 });
+  }
   if (!user || !user.isActive || !verifyPassword(password, user.passwordHash)) {
     return NextResponse.json({ error: "Username atau password salah." }, { status: 401 });
   }

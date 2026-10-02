@@ -14,19 +14,25 @@ export default function LoginPage() {
     event.preventDefault();
     setLoading(true);
     setError("");
-    const response = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
-    });
-    const result = await response.json();
-    if (!response.ok) {
-      setError(result.error ?? "Login gagal.");
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setError(result.error ?? "Login gagal.");
+        return;
+      }
+      router.replace("/");
+      router.refresh();
+    } catch {
+      setError("Tidak bisa menghubungi server. Coba lagi beberapa saat.");
+    } finally {
       setLoading(false);
-      return;
     }
-    router.replace("/");
-    router.refresh();
   }
 
   return (
